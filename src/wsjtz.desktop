@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=wsjtz
+Comment=Amateur Radio Weak Signal Operating
+Exec=wsjtx
+Type=Application
+Icon=wsjtx_icon
+Categories=HamRadio
+StartupNotify=true

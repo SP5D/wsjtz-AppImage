@@ -1,0 +1,16 @@
+version: '3.7'
+
+services:
+
+  wsjtz_build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - wsjtz_version=2.5.4-1.22
+        - wsjtz_sum=a2944ebc961e6d2ecfd1f36a07f4ec5ad6d6f80a528d8ef6f894794b247c3fe9
+    volumes:
+      - ./release/:/release/
+    tty: true
+    stdin_open: true
+    command: [ /bin/bash ]
