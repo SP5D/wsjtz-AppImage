@@ -7,6 +7,16 @@ Tests have shown that I have provided enough libs for any real desktop, but feel
 
 ## Install
 Just download and run the AppImage.
+### Arch Linux
+This AppImage is available in AUR repository as ```wsjtz-appimage```.  
+You can use your favorite helper, e.g.:  
+```paru -S wsjtz-appimage```
+### Linux (in general)
+The simplest way is just:  
+```
+wget https://github.com/SP5D/wsjtz-AppImage/releases/download/v2.5.4-1.22/wsjtz-x86_64.AppImage -O /usr/bin/wsjtz-appimage
+chmod 755 /usr/bin/wsjtz-appimage
+```
 
 ## Build
 Clone the repo and:  
