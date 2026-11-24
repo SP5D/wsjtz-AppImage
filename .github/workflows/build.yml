@@ -1,0 +1,98 @@
+name: Build & Verify WSJT-Z AppImage
+
+on:
+  push:
+    branches:
+      - main
+      - "test/**"
+      - "feat/**"
+      - "fix/**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      wsjtz_version:
+        description: "WSJT-Z version tag (without 'v' prefix, e.g. 2.0.20)"
+        required: true
+        default: "2.0.20"
+        type: string
+      hamlib_version:
+        description: "Hamlib version tag (e.g. 4.7.2)"
+        required: false
+        default: "4.7.2"
+        type: string
+      create_release:
+        description: "Publish GitHub Release if build & tests pass"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    name: Build & Test AppImage
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve version parameters
+        id: vars
+        run: |
+          if [ -n "${{ inputs.wsjtz_version }}" ]; then
+            WSJTZ_VER="${{ inputs.wsjtz_version }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            WSJTZ_VER="${GITHUB_REF#refs/tags/v}"
+          else
+            WSJTZ_VER="2.0.20"
+          fi
+          HAMLIB_VER="${{ inputs.hamlib_version || '4.7.2' }}"
+          echo "wsjtz_version=${WSJTZ_VER}" >> "$GITHUB_OUTPUT"
+          echo "hamlib_version=${HAMLIB_VER}" >> "$GITHUB_OUTPUT"
+          echo "Building WSJT-Z v${WSJTZ_VER} with Hamlib ${HAMLIB_VER}"
+
+      - name: Build AppImage in Docker (includes internal smoke tests)
+        run: |
+          mkdir -p release
+          docker build \
+            --build-arg wsjtz_version="${{ steps.vars.outputs.wsjtz_version }}" \
+            --build-arg hamlib_version="${{ steps.vars.outputs.hamlib_version }}" \
+            -t wsjtz-appimage-builder .
+          docker run --rm -v "$PWD/release:/release" wsjtz-appimage-builder
+          ls -lh release/wsjtz-x86_64.AppImage
+          sha256sum release/wsjtz-x86_64.AppImage | tee release/wsjtz-x86_64.AppImage.sha256
+
+      - name: Verify AppImage on clean Linux host environment
+        run: |
+          chmod +x ./test-appimage.sh release/wsjtz-x86_64.AppImage
+          ./test-appimage.sh release/wsjtz-x86_64.AppImage
+
+      - name: Upload AppImage artifact (for manual testing before release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wsjtz-${{ steps.vars.outputs.wsjtz_version }}-x86_64-AppImage
+          path: |
+            release/wsjtz-x86_64.AppImage
+            release/wsjtz-x86_64.AppImage.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.create_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.vars.outputs.wsjtz_version }}
+          name: WSJT-Z v${{ steps.vars.outputs.wsjtz_version }} AppImage
+          body: |
+            AppImage build of **WSJT-Z v${{ steps.vars.outputs.wsjtz_version }}** (with static Hamlib ${{ steps.vars.outputs.hamlib_version }}).
+
+            ### Changes & Fixes
+            - Built with `linuxdeploy` and `linuxdeploy-plugin-qt` (matching upstream WSJT-X 3.0 packaging).
+            - Bundled `qt.conf` and complete Qt5 plugin set (including `audio/libqtaudio_alsa.so` and `audio/libqtmedia_pulse.so`) to prevent host Qt5 plugin collisions (`realloc(): invalid pointer` on Linux Mint / Ubuntu).
+            - Passed automated smoke tests (`wsjtx`, `jt9`, `wsprd`, `ALLCALL7.TXT`, audio plugins, AUR desktop/icon extraction).
+          files: |
+            release/wsjtz-x86_64.AppImage
+            release/wsjtz-x86_64.AppImage.sha256

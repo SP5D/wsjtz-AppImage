@@ -4,5 +4,5 @@ Comment=Amateur Radio Weak Signal Operating
 Exec=wsjtx
 Type=Application
 Icon=wsjtx_icon
-Categories=HamRadio
+Categories=Network;HamRadio;
 StartupNotify=true

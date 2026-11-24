@@ -5,7 +5,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - wsjtz_version=2.0.18
+        - wsjtz_version=2.0.20
+        - hamlib_version=4.7.2
     volumes:
       - ./release/:/release/
     tty: true

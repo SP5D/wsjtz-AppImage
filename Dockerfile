@@ -1,98 +1,112 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
-ARG wsjtz_version
+ARG wsjtz_version=2.0.20
+ARG hamlib_version=4.7.2
 
-# ── 1. Build dependencies ────────────────────────────────────────────────────
+# ── 1. Build & packaging dependencies ────────────────────────────────────────
 RUN apt-get update && \
-    dpkg --configure -a && \
     apt-get -y install --no-install-recommends \
-    tzdata wget git ca-certificates \
-    cmake autoconf automake libtool g++ build-essential gfortran binutils pkg-config \
-    libboost-all-dev libusb-1.0-0-dev libudev-dev \
-    qtbase5-dev qttools5-dev libqt5serialport5-dev qtmultimedia5-dev \
-    libqt5sql5-sqlite libqt5websockets5-dev \
-    libfftw3-dev \
+    tzdata wget curl git ca-certificates file patchelf desktop-file-utils \
+    cmake ninja-build autoconf automake libtool g++ build-essential gfortran binutils pkg-config \
+    libboost-log-dev libboost-thread-dev libboost-filesystem-dev libboost-regex-dev \
+    libusb-1.0-0-dev libudev-dev libreadline-dev portaudio19-dev \
+    qtbase5-dev qt5-qmake qttools5-dev qttools5-dev-tools \
+    libqt5serialport5-dev qtmultimedia5-dev libqt5multimedia5-plugins \
+    libqt5sql5-sqlite libqt5websockets5-dev libqt5svg5-dev \
+    libfftw3-dev texinfo asciidoctor \
     && rm -rf /var/lib/apt/lists/*
 
-# ── 2. Hamlib (static build) ──────────────────────────────────────────────────
+# ── 2. Hamlib (static build to isolated prefix) ──────────────────────────────
 WORKDIR /build/hamlib/src
-RUN git clone --depth 1 --branch Hamlib-4.7 https://github.com/Hamlib/Hamlib.git . && \
+RUN git clone --depth 1 --branch ${hamlib_version} https://github.com/Hamlib/Hamlib.git . && \
     ./bootstrap
 
 WORKDIR /build/hamlib/build
 RUN ../src/configure \
-    --prefix=/build/wsjtz.AppDir/usr \
+    --prefix=/build/hamlib-prefix \
     --disable-shared \
     --enable-static \
     --without-cxx-binding \
     --disable-winradio \
-    CFLAGS="-g -O2 -fdata-sections -ffunction-sections" \
+    CFLAGS="-g -O2 -fPIC -fdata-sections -ffunction-sections" \
     LDFLAGS="-Wl,--gc-sections" && \
     make -j $(nproc --all) && \
     make install-strip
 
-# ── 3. WSJT-Z source (from GitHub) ──────────────────────────────────────────
+# ── 3. WSJT-Z source (from GitHub) ───────────────────────────────────────────
 WORKDIR /build/wsjtz
 RUN git clone --depth 1 --branch v${wsjtz_version} https://github.com/sq9fve/wsjt-z.git src
 
-# ── 4. Build WSJT-Z ─────────────────────────────────────────────────────────
+# ── 4. Build & install WSJT-Z into AppDir ────────────────────────────────────
 WORKDIR /build/wsjtz/build
-RUN cmake \
-    -DCMAKE_PREFIX_PATH=/build/wsjtz.AppDir/usr \
+RUN cmake -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=/build/hamlib-prefix \
     -DWSJT_SKIP_MANPAGES=ON \
     -DWSJT_GENERATE_DOCS=OFF \
     -DCMAKE_INSTALL_PREFIX=/build/wsjtz.AppDir/usr \
+    -Wno-dev \
     ../src && \
     cmake --build . -j $(nproc --all) && \
-    cmake --build . --target install
+    cmake --install .
 
-# ── 5. AppImage tooling ─────────────────────────────────────────────────────
-RUN apt-get update && apt-get -y install --no-install-recommends \
-    python3 python3-setuptools wget fakeroot gnupg2 libglib2.0-bin file \
-    desktop-file-utils libgdk-pixbuf2.0-dev librsvg2-dev libyaml-dev \
-    zsync gtk-update-icon-cache strace elfutils \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /tmp
-RUN wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage && \
-    chmod +x /tmp/appimagetool-x86_64.AppImage && \
-    cd /opt && /tmp/appimagetool-x86_64.AppImage --appimage-extract && \
-    mv squashfs-root appimage-tool.AppDir && \
-    ln -s /opt/appimage-tool.AppDir/AppRun /usr/bin/appimagetool && \
-    rm /tmp/appimagetool-x86_64.AppImage
-
-# ── 6. Assemble AppDir ──────────────────────────────────────────────────────
+# ── 5. Prepare AppDir & linuxdeploy tooling ──────────────────────────────────
 COPY ./src/entrypoint.sh /
+COPY ./src/wsjtz.desktop /build/wsjtz.AppDir/usr/share/applications/wsjtz.desktop
 
-WORKDIR /build/wsjtz.AppDir/
-RUN cp usr/share/pixmaps/wsjtx_icon.png .
+# Remove upstream wsjtx.desktop so linuxdeploy uses wsjtz.desktop unambiguously
+RUN rm -f /build/wsjtz.AppDir/usr/share/applications/wsjtx.desktop \
+          /build/wsjtz.AppDir/usr/share/applications/message_aggregator.desktop
 
-COPY ./src/AppRun .
-COPY ./src/wsjtz.desktop .
+WORKDIR /build
+ENV LINUXDEPLOY_TAG="1-alpha-20251107-1"
+ENV LINUXDEPLOY_SHA256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
 
-ENV libs_to_copy="libboost|libicui18n|libicuuc|libicudata|libusb|libfftw3|libx11|libgfortran|libdouble|libquad|libQt5Core|libQt5Gui|libQt5Widgets|libQt5SerialPort|libQt5PrintSupport|libQt5Sql|libQt5WebSockets|libQt5Network|libQt5Multimedia|libQt5DBus|libQt5XcbQpa|libQt5Svg|libgomp|libxcb"
+RUN curl -fsSL -o linuxdeploy-x86_64.AppImage \
+      "https://github.com/linuxdeploy/linuxdeploy/releases/download/${LINUXDEPLOY_TAG}/linuxdeploy-x86_64.AppImage" && \
+    echo "${LINUXDEPLOY_SHA256}  linuxdeploy-x86_64.AppImage" | sha256sum -c - && \
+    curl -fsSL -o linuxdeploy-plugin-qt-x86_64.AppImage \
+      "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage" && \
+    chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage && \
+    ./linuxdeploy-x86_64.AppImage --appimage-extract >/dev/null && mv squashfs-root /opt/linuxdeploy && \
+    ./linuxdeploy-plugin-qt-x86_64.AppImage --appimage-extract >/dev/null && mv squashfs-root /opt/linuxdeploy-plugin-qt && \
+    ln -sf /opt/linuxdeploy/AppRun /usr/local/bin/linuxdeploy && \
+    ln -sf /opt/linuxdeploy-plugin-qt/AppRun /usr/local/bin/linuxdeploy-plugin-qt && \
+    rm -f linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
 
-WORKDIR /build/wsjtz.AppDir/usr/lib
-RUN ldconfig -p | grep -E -i "$libs_to_copy" | grep -o '\W/[^ ]*' | xargs -n 1 -I {} cp {} .
+# ── 6. Bundle Qt, libraries & build AppImage ─────────────────────────────────
+WORKDIR /build
+ENV LDAI_OUTPUT="wsjtz-x86_64.AppImage"
+ENV EXTRA_PLATFORM_PLUGINS="libqoffscreen.so"
 
-# Qt platform plugins (critical for AppImage portability)
-RUN mkdir -p /build/wsjtz.AppDir/usr/plugins/platforms && \
-    cp /usr/lib/x86_64-linux-gnu/qt5/plugins/platforms/libqxcb.so \
-       /build/wsjtz.AppDir/usr/plugins/platforms/ 2>/dev/null || \
-    cp /usr/lib/qt5/plugins/platforms/libqxcb.so \
-       /build/wsjtz.AppDir/usr/plugins/platforms/ 2>/dev/null || true
-RUN mkdir -p /build/wsjtz.AppDir/usr/plugins/sqldrivers && \
-    cp /usr/lib/x86_64-linux-gnu/qt5/plugins/sqldrivers/libqsqlite.so \
-       /build/wsjtz.AppDir/usr/plugins/sqldrivers/ 2>/dev/null || \
-    cp /usr/lib/qt5/plugins/sqldrivers/libqsqlite.so \
-       /build/wsjtz.AppDir/usr/plugins/sqldrivers/ 2>/dev/null || true
+RUN linuxdeploy \
+    --appdir /build/wsjtz.AppDir \
+    --plugin qt \
+    --output appimage \
+    --desktop-file /build/wsjtz.AppDir/usr/share/applications/wsjtz.desktop \
+    --icon-file /build/wsjtz.AppDir/usr/share/pixmaps/wsjtx_icon.png
 
-# ── 7. Build AppImage ───────────────────────────────────────────────────────
-WORKDIR /build/
-RUN appimagetool wsjtz.AppDir --comp xz
+# ── 7. Smoke-test the produced AppImage ──────────────────────────────────────
+RUN test -f /build/wsjtz-x86_64.AppImage && \
+    chmod +x /build/wsjtz-x86_64.AppImage && \
+    /build/wsjtz-x86_64.AppImage --appimage-extract >/dev/null && \
+    test -x squashfs-root/usr/bin/wsjtx && \
+    test -x squashfs-root/usr/bin/jt9 && \
+    test -x squashfs-root/usr/bin/wsprd && \
+    test -x squashfs-root/usr/bin/wsjtx_app_version && \
+    test -f squashfs-root/usr/bin/ALLCALL7.TXT && \
+    test -f squashfs-root/usr/bin/qt.conf && \
+    test -f squashfs-root/wsjtz.desktop && \
+    test -f squashfs-root/wsjtx_icon.png && \
+    ls squashfs-root/usr/plugins/audio/*.so | grep -q "libqtaudio_alsa.so" && \
+    ls squashfs-root/usr/plugins/audio/*.so | grep -q "libqtmedia_pulse.so" && \
+    ./squashfs-root/usr/bin/wsjtx_app_version --version && \
+    ./squashfs-root/usr/bin/jt9 -h >/dev/null && \
+    (timeout 3 env QT_QPA_PLATFORM=offscreen ./squashfs-root/AppRun || [ $? -eq 124 ]) && \
+    rm -rf squashfs-root
 
 CMD [ "/bin/bash" ]
 ENTRYPOINT [ "/entrypoint.sh" ]
