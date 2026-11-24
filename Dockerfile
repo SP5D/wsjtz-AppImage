@@ -82,8 +82,12 @@ WORKDIR /build
 ENV LDAI_OUTPUT="wsjtz-x86_64.AppImage"
 ENV EXTRA_PLATFORM_PLUGINS="libqoffscreen.so"
 
+# Deploy libGL.so.1 so the AppImage runs even on headless CI runners without X11/OpenGL installed
 RUN linuxdeploy \
     --appdir /build/wsjtz.AppDir \
+    --library /usr/lib/x86_64-linux-gnu/libGL.so.1 \
+    --library /usr/lib/x86_64-linux-gnu/libGLX.so.0 \
+    --library /usr/lib/x86_64-linux-gnu/libGLdispatch.so.0 \
     --plugin qt \
     --output appimage \
     --desktop-file /build/wsjtz.AppDir/usr/share/applications/wsjtz.desktop \

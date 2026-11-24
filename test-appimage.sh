@@ -11,7 +11,6 @@ fi
 
 APPIMAGE="$(readlink -f "$APPIMAGE")"
 echo "=== [1/5] Checking file attributes: $APPIMAGE ==="
-chmod +x "$APPIMAGE"
 ls -lh "$APPIMAGE"
 file "$APPIMAGE"
 sha256sum "$APPIMAGE"

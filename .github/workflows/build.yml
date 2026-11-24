@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Resolve version parameters
         id: vars
@@ -67,6 +67,7 @@ jobs:
 
       - name: Verify AppImage on clean Linux host environment
         run: |
+          sudo chown -R "$USER:$USER" release
           chmod +x ./test-appimage.sh release/wsjtz-x86_64.AppImage
           ./test-appimage.sh release/wsjtz-x86_64.AppImage
 
